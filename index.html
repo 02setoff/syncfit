@@ -643,7 +643,7 @@ function toast(m) { const t = document.createElement('div'); t.className = 'toas
 /* ---------------- wiring ---------------- */
 $('#go-cam').addEventListener('click', startCamera);
 $('#vfile').addEventListener('change', e => { const f = e.target.files[0]; if (f) startFile(f, '영상 파일을 분석하고 있어요'); });
-const demoSrc = (vid.canPlayType('video/mp4; codecs="avc1.42E01E"') ? 'demo-curl.mp4' : 'demo-curl.webm') + '?v=3';
+const demoSrc = (vid.canPlayType('video/mp4; codecs="avc1.42E01E"') ? 'demo-curl.mp4' : 'demo-curl.webm') + '?v=4';
 $('#go-demo').addEventListener('click', () => startFile(demoSrc, '3D 예시 영상을 분석하고 있어요'));
 fetch(demoSrc, { method: 'HEAD' }).then(r => { if (r.ok) $('#demo-row').hidden = false; }).catch(() => {});
 $('#b-start').addEventListener('click', () => { if (S.phase === 'done') { S.setIdx = 0; S.setLog = []; S.feed = []; S.signals = 0; S.startedAt = null; renderFeed(); updateSummary(); } startSet(); });
