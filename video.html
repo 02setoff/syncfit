@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SYNCFIT 사용 장면 영상</title>
+<meta name="description" content="웨어러블 밴드 4개로 운동을 돕는 SYNCFIT의 사용 장면을 3D로 만든 61초 영상">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+:root { color-scheme: dark; --bg: #0b1a15; --panel: #11241d; --card: #163027; --line: #24443a; --ink: #eef5f0; --muted: #9db4a8; --green: #6cc49a; --amber: #e8a64a;
+  --ui: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; --num: "Barlow Condensed", "Arial Narrow", sans-serif }
+* { box-sizing: border-box }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--ui); font-size: 15px; line-height: 1.55 }
+a { color: inherit }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 18px 16px 40px }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px }
+.brand b { font-family: var(--num); font-size: 28px; letter-spacing: .06em; color: var(--green) }
+.brand span { color: var(--muted); font-size: 13px; margin-left: 8px }
+.btn { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 16px; font-weight: 700; font-size: 14px; text-decoration: none; background: var(--green); color: #08201a }
+.player { background: #000; border-radius: 18px; overflow: hidden; border: 1px solid var(--line) }
+video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000 }
+h1 { font-size: clamp(20px, 3vw, 26px); margin: 18px 0 4px; text-wrap: balance }
+.lead { color: var(--muted); margin: 0 0 16px }
+.chapters { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none }
+.chapters button { width: 100%; text-align: left; display: flex; gap: 10px; align-items: baseline; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: inherit; cursor: pointer }
+.chapters button:hover, .chapters button.on { border-color: var(--green); background: var(--card) }
+.chapters time { font-family: var(--num); font-size: 18px; color: var(--green); min-width: 36px }
+.chapters small { display: block; color: var(--muted); font-size: 12.5px }
+footer { margin-top: 22px; color: var(--muted); font-size: 12.5px }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><b>SYNCFIT</b><span>창의역량1 · 9조 철모</span></div>
+    <a class="btn" href="./">카메라 프로토타입 실행 →</a>
+  </header>
+  <div class="player"><video id="v" controls playsinline preload="metadata" poster="media/poster.jpg" src="media/syncfit-3d.mp4"></video></div>
+  <h1>밴드 4개가 운동 중의 확인을 대신하는 장면</h1>
+  <p class="lead">3D로 만든 61초 사용 장면 영상이에요. 실제 제품 촬영이 아니라 기획서 7.4 스토리보드를 시뮬레이션한 것이에요. 장면을 누르면 그 부분부터 재생돼요.</p>
+  <ul class="chapters" id="ch"></ul>
+  <footer>영상의 기기·앱 화면은 콘셉트이며, 실제 동작을 확인할 수 있는 것은 휴대폰 카메라로 대신 구현한 프로토타입이에요.</footer>
+</div>
+<script>
+const CH = [
+  [0, '시작', '네 개의 밴드'], [4, 'As-Is', '확인할 때마다 운동이 멈춘다'], [10, '① 헬스장 도착', '지난 기록으로 오늘 루틴 제안'],
+  [15, '② 착용 확인', '손목·발목 4곳을 10초 안에'], [20, '③ 자세 신호', '오른팔이 늦으면 오른 손목만 진동'], [28, '④ 자동 카운팅', '세트가 끝나면 휴식 타이머 자동 시작'],
+  [35, '⑤ 자세 점검 모드', '마지막 세트만 15초 영상으로'], [40, '⑥ 트레이너 공유', '기록과 영상을 한 번에'], [47, '서연의 하루', '퇴근 후 40분, 기록은 알아서'],
+  [53, '다음 날', '변화 카드로 꾸준함 확인'], [57, '마무리', '']
+];
+const v = document.getElementById('v'), ul = document.getElementById('ch');
+CH.forEach(([t, name, sub]) => {
+  const li = document.createElement('li'), b = document.createElement('button');
+  const tm = document.createElement('time'); tm.textContent = Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  const d = document.createElement('div'); d.textContent = name; if (sub) { const s = document.createElement('small'); s.textContent = sub; d.appendChild(s); }
+  b.append(tm, d); b.dataset.t = t; b.addEventListener('click', () => { v.currentTime = t; v.play().catch(() => {}); });
+  li.appendChild(b); ul.appendChild(li);
+});
+v.addEventListener('timeupdate', () => { let cur = 0; CH.forEach(([t], i) => { if (v.currentTime >= t) cur = i; }); ul.querySelectorAll('button').forEach((b, i) => b.classList.toggle('on', i === cur)); });
+</script>
+</body>
+</html>
