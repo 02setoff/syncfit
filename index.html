@@ -500,6 +500,11 @@ async function startFile(file, label) {
     await loadModel();
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     vid.srcObject = null; vid.src = typeof file === 'string' ? file : URL.createObjectURL(file); vid.loop = true; vid.muted = true; lastCT = null;
+    // warm the model up on the first frame so the opening seconds (the hands-up start) are not missed
+    if (vid.readyState < 2) await new Promise(r => vid.addEventListener('loadeddata', r, { once: true }));
+    $('#err').textContent = '인식 준비 중…';
+    for (let i = 0; i < 4; i++) { try { landmarker.detectForVideo(vid, performance.now()); } catch (e) {} await new Promise(r => setTimeout(r, 40)); }
+    $('#err').textContent = ''; vid.currentTime = 0;
     await vid.play(); S.src = 'file'; S.mirror = false; begin(); $('#b-flip').hidden = true;
     toast(label || '영상을 분석하고 있어요');
   } catch (e) { $('#err').textContent = '영상을 열지 못했어요: ' + (e.message || e); }
@@ -634,7 +639,7 @@ function toast(m) { const t = document.createElement('div'); t.className = 'toas
 /* ---------------- wiring ---------------- */
 $('#go-cam').addEventListener('click', startCamera);
 $('#vfile').addEventListener('change', e => { const f = e.target.files[0]; if (f) startFile(f, '영상 파일을 분석하고 있어요'); });
-const demoSrc = vid.canPlayType('video/mp4; codecs="avc1.42E01E"') ? 'demo-curl.mp4' : 'demo-curl.webm';
+const demoSrc = (vid.canPlayType('video/mp4; codecs="avc1.42E01E"') ? 'demo-curl.mp4' : 'demo-curl.webm') + '?v=3';
 $('#go-demo').addEventListener('click', () => startFile(demoSrc, '3D 예시 영상을 분석하고 있어요'));
 fetch(demoSrc, { method: 'HEAD' }).then(r => { if (r.ok) $('#demo-row').hidden = false; }).catch(() => {});
 $('#b-start').addEventListener('click', () => { if (S.phase === 'done') { S.setIdx = 0; S.setLog = []; S.feed = []; S.signals = 0; S.startedAt = null; renderFeed(); updateSummary(); } startSet(); });
