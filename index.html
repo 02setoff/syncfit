@@ -235,6 +235,9 @@ function analyzeCurl(lm, t, wl) {
   // camera view from shoulder width vs torso length: ~0.8+ facing the camera, ~0.5 at 45°, ~0.2 side-on
   if (hipsOk) A.vf = ema(A.vf, dist(sh.L, sh.R) / torso, .05);
   const frontal = A.vf != null && A.vf > .72; // facing the camera, the elbow hides behind the forearm, so elbow drift is not judged
+  // when the far arm is hidden, the model sometimes puts both arms in the same place for a few frames: skip those frames
+  const shw = dist(sh.L, sh.R);
+  if (A.vf != null && A.vf > .3 && ok.L && ok.R && dist(el.L, el.R) < .45 * shw && dist(wr.L, wr.R) < .45 * shw) return { conf, angles: {}, ok };
   const G = wl ? (i => W3(wl, i, lm)) : p, ang = wl ? angle3 : angle;
   const J = { L: [L.lSh, L.lEl, L.lWr], R: [L.rSh, L.rEl, L.rWr] };
   const angles = {};
@@ -294,7 +297,8 @@ function armRep(a, t0, t1) {
   let lo = Infinity; for (let i = 0; i <= ip; i++) lo = Math.min(lo, w[i][1]);
   const hi = w[ip][1], span = hi - lo; if (span < .3) return null;
   const at = f => lastCross(w, lo + f * span, ip), t15 = at(.15), t85 = at(.85);
-  return { lo, hi, span, top: w[ip], at, rise: t15 != null && t85 != null ? t85 - t15 : null };
+  const rise = t15 != null && t85 != null ? t85 - t15 : null;
+  return { lo, hi, span, top: w[ip], at, rise: rise != null && rise >= .15 ? rise : null }; // < 0.15 s is a tracking glitch, not a curl
 }
 // while the second arm is still rising: compare both wrists at the same share of each arm's usual range (> 0: right is later)
 function earlyLag(t0, t1) {
