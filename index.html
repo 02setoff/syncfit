@@ -529,8 +529,9 @@ function loop() {
       conf = Math.min(...[11, 12, 15, 16, 27, 28].map(i => lm[i].visibility ?? 1));
       // hands-free start: both wrists above the head for 0.5 s
       if (S.phase === 'ready') {
-        const up = lm[15].y < lm[0].y && lm[16].y < lm[0].y && (lm[15].visibility ?? 1) > .6 && (lm[16].visibility ?? 1) > .6;
-        if (up) { if (S.raiseT == null) { S.raiseT = t; beep(660, .08, .04); } else if (t - S.raiseT > .5) { S.raiseT = null; startSet(); } } else S.raiseT = null;
+        const up = lm[15].y < lm[0].y && lm[16].y < lm[0].y && (lm[15].visibility ?? 1) > .5 && (lm[16].visibility ?? 1) > .5;
+        if (up) { S.lastUpT = t; if (S.raiseT == null) { S.raiseT = t; beep(660, .08, .04); } else if (t - S.raiseT > .5) { S.raiseT = null; startSet(); } }
+        else if (S.raiseT != null && t - (S.lastUpT ?? t) > .3) S.raiseT = null; // a dropped frame or two does not cancel the gesture
       }
     }
   }
