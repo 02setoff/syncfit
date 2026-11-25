@@ -142,7 +142,7 @@ video.clip { width: 100%; border-radius: 12px; background: #000 }
 
     <aside>
       <div class="card">
-        <h2>세트 설정 <small id="ex-tip">정면도 OK · 45°로 서면 팔꿈치까지 잡아요</small></h2>
+        <h2>세트 설정 <small id="ex-tip">정면도 OK · 30~45° 비스듬히 서면 팔꿈치까지 잡아요</small></h2>
         <div class="set-grid">
           <label for="in-reps">목표 횟수<input id="in-reps" type="number" min="3" max="60" value="12"></label>
           <label for="in-sets">세트<input id="in-sets" type="number" min="1" max="10" value="3"></label>
@@ -183,7 +183,7 @@ const store = { get(k, d) { try { const v = localStorage.getItem('syncfit.cam.' 
 
 /* ---------------- state ---------------- */
 const EX = {
-  curl: { name: '덤벨 컬', unit: '회', tip: '정면도 OK · 45°로 서면 팔꿈치까지 잡아요', cap: '회 · 양팔 기준' },
+  curl: { name: '덤벨 컬', unit: '회', tip: '정면도 OK · 30~45° 비스듬히 서면 팔꿈치까지 잡아요', cap: '회 · 양팔 기준' },
   march: { name: '제자리 걷기', unit: '걸음', tip: '정면 · 무릎과 발목이 보이게', cap: '걸음 · 좌우 합계' },
   step: { name: '스텝 터치', unit: '회', tip: '정면 · 발끝까지 보이게', cap: '회 · 좌우 합계' }
 };
