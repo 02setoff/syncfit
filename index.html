@@ -126,7 +126,7 @@ video.clip { width: 100%; border-radius: 12px; background: #000 }
               <button class="btn" id="go-cam">카메라 켜기</button>
               <label class="btn ghost file" for="vfile">영상 파일로 분석<input type="file" id="vfile" accept="video/*"></label>
             </div>
-            <div class="row" id="demo-row" hidden><button class="btn ghost small" id="go-demo">3D 예시 영상으로 체험</button></div>
+            <div class="row" id="demo-row" hidden><button class="btn ghost small" id="go-demo">3D 예시 영상으로 체험 · 덤벨 컬</button></div>
             <div class="err" id="err" role="status"></div>
           </div>
         </div>
@@ -173,7 +173,9 @@ video.clip { width: 100%; border-radius: 12px; background: #000 }
 <script type="module">
 const VERSION = '0.10.14';
 const WASM = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/wasm`;
-const MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
+// the light model by default: the full one (?model=full) runs about 2x slower and did not judge the demo better
+const MODEL_KIND = new URLSearchParams(location.search).get('model') === 'full' ? 'full' : 'lite';
+const MODEL = `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${MODEL_KIND}/float16/1/pose_landmarker_${MODEL_KIND}.task`;
 const $ = s => document.querySelector(s);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const two = n => String(n).padStart(2, '0');
@@ -345,18 +347,22 @@ function analyzeLegs(lm, t, mode) {
   const hp = { L: P(lm, L.lHip), R: P(lm, L.rHip) }, kn = { L: P(lm, L.lKn), R: P(lm, L.rKn) }, an = { L: P(lm, L.lAn), R: P(lm, L.rAn) };
   const vis = Math.min(hp.L.v, hp.R.v, kn.L.v, kn.R.v, an.L.v, an.R.v);
   if (vis < .55) return { conf: vis, hold: '무릎과 발목까지 보이게 뒤로 물러나 주세요' };
-  const hw = dist(hp.L, hp.R) || .1, hc = mid(hp.L, hp.R);
+  // scale by torso length: the two hip points often collapse onto each other, so hip width is too unsteady to divide by
+  const hc = mid(hp.L, hp.R), tor = dist(mid(P(lm, L.lSh), P(lm, L.rSh)), hc) || .2;
+  // smoothing by elapsed time, not per frame, so a slow phone (few frames per step) still sees the peak of each lift
+  const k = A.lastT == null ? 1 : 1 - Math.exp(-clamp(t - A.lastT, 0, .5) / .06); A.lastT = t;
   ['L', 'R'].forEach(s => {
-    const sd = A.side[s];
+    const sd = A.side[s], other = A.side[s === 'L' ? 'R' : 'L'];
     const thigh = dist(hp[s], kn[s]) + dist(kn[s], an[s]);
     let v;
     if (mode === 'march') v = clamp((an.L.y + an.R.y) / 2 - an[s].y, 0, 1) / (thigh * .5); // ankle lift vs the other foot
-    else v = Math.abs(an[s].x - hc.x) / hw; // step: ankle distance from body centre in hip widths
-    sd.v = ema(sd.v, v, .5);
-    const hi = mode === 'march' ? .35 : 1.7, lo = mode === 'march' ? .15 : 1.15;
-    if (sd.st === 'down' && sd.v > hi) { sd.st = 'up'; sd.peak = sd.v; }
+    else v = Math.abs(an[s].x - hc.x) / tor; // step: ankle distance from body centre in torso lengths
+    sd.v = ema(sd.v, v, k);
+    const hi = mode === 'march' ? .12 : .45, lo = mode === 'march' ? .06 : .36;
+    // one foot at a time, and not the same foot again within 0.45 s: a twitch of the standing ankle is not a step
+    if (sd.st === 'down' && sd.v > hi && other.st === 'down' && t - (sd.end ?? -9) > .45) { sd.st = 'up'; sd.peak = sd.v; }
     if (sd.st === 'up') sd.peak = Math.max(sd.peak, sd.v);
-    if (sd.st === 'up' && sd.v < lo) { sd.st = 'down'; onStep(s, sd.peak, t); }
+    if (sd.st === 'up' && sd.v < lo) { sd.st = 'down'; sd.end = t; onStep(s, sd.peak, t); }
   });
   return { conf: vis };
 }
@@ -366,8 +372,9 @@ function onStep(side, peak, t) {
   A.lifts[side].push(peak); A.times.push(t);
   let sig = null;
   const l = A.lifts.L.slice(-4), r = A.lifts.R.slice(-4);
-  if (l.length >= 3 && r.length >= 3) {
-    const ml = l.reduce((a, b) => a + b, 0) / l.length, mr = r.reduce((a, b) => a + b, 0) / r.length;
+  if (l.length >= 4 && r.length >= 4 && S.reps >= 12) { // the first steps only set the baseline
+    const med = a => { const s = [...a].sort((x, y) => x - y), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
+    const ml = med(l), mr = med(r); // median, so one badly tracked step does not hide or fake a difference
     if (Math.abs(ml - mr) / Math.max(ml, mr) > .3 && S.reps % 4 === 0) sig = { kind: 'warn', band: ml < mr ? 'LA' : 'RA', title: `${ml < mr ? '왼' : '오른'}${S.ex === 'march' ? '무릎이 덜 올라와요' : '발이 덜 나가요'}`, sub: `좌우 차이 ${Math.round(Math.abs(ml - mr) / Math.max(ml, mr) * 100)}%`, voice: ml < mr ? '왼발 더' : '오른발 더' };
   }
   const iv = A.times.slice(-7).map((x, i, a) => i ? x - a[i - 1] : null).filter(x => x);
@@ -466,11 +473,11 @@ let T = 0, mediaT = 0, lastCT = null, wlm = null;
 function clock() { if (S.src === 'file') { const ct = vid.currentTime; if (lastCT != null) mediaT += Math.max(0, ct - lastCT); lastCT = ct; return mediaT; } return now(); }
 async function loadModel() {
   if (landmarker) return landmarker;
-  $('#err').textContent = '자세 인식 모델을 불러오는 중… (처음 한 번, 약 5MB)';
+  $('#err').textContent = `자세 인식 모델을 불러오는 중… (처음 한 번, 약 ${MODEL_KIND === 'full' ? 9 : 6}MB)`;
   const vision = await import(`https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${VERSION}/vision_bundle.mjs`);
   const files = await vision.FilesetResolver.forVisionTasks(WASM);
   const opts = d => ({ baseOptions: { modelAssetPath: MODEL, delegate: d }, runningMode: 'VIDEO', numPoses: 1, minPoseDetectionConfidence: .5, minPosePresenceConfidence: .5, minTrackingConfidence: .5 });
-  try { landmarker = await vision.PoseLandmarker.createFromOptions(files, opts('GPU')); }
+  try { landmarker = await vision.PoseLandmarker.createFromOptions(files, opts(new URLSearchParams(location.search).get('delegate') === 'cpu' ? 'CPU' : 'GPU')); }
   catch (e) { landmarker = await vision.PoseLandmarker.createFromOptions(files, opts('CPU')); }
   $('#err').textContent = '';
   return landmarker;
@@ -482,7 +489,7 @@ async function startCamera() {
     await loadModel();
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: S.facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
-    vid.srcObject = stream; vid.loop = false; await vid.play();
+    vid.srcObject = stream; vid.loop = false; resetDisplay(); await vid.play();
     S.src = 'camera'; S.mirror = S.facing === 'user'; begin();
     $('#b-flip').hidden = false;
   } catch (e) {
@@ -503,7 +510,7 @@ async function startFile(file, label) {
   try {
     await loadModel();
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    vid.srcObject = null; vid.src = typeof file === 'string' ? file : URL.createObjectURL(file); vid.loop = true; vid.muted = true; lastCT = null;
+    vid.srcObject = null; vid.src = typeof file === 'string' ? file : URL.createObjectURL(file); vid.loop = true; vid.muted = true; lastCT = null; resetDisplay();
     // warm the model up on the first frame so the opening seconds (the hands-up start) are not missed
     if (vid.readyState < 2) await new Promise(r => vid.addEventListener('loadeddata', r, { once: true }));
     $('#err').textContent = '인식 준비 중…';
@@ -528,7 +535,7 @@ function loop() {
     lastVideoT = vid.currentTime;
     const t = T = clock();
     try { const r = landmarker.detectForVideo(vid, performance.now()); lm = r.landmarks && r.landmarks[0] ? r.landmarks[0].slice() : null; wlm = r.worldLandmarks && r.worldLandmarks[0] ? r.worldLandmarks[0].slice() : null; } catch (e) { lm = null; wlm = null; }
-    if (lm) stabilize(lm, wlm, t);
+    if (lm) { stabilize(lm, wlm, t); smoothDisplay(lm, t); } else if (t - dispT > .4 || t < dispT) disp = null;
     fpsT.push(tw); while (fpsT.length && fpsT[0] < tw - 1) fpsT.shift();
     if (S.phase === 'active') {
       if (!lm) hold('사람이 보이지 않아요. 카메라 앞에 서 주세요');
@@ -575,6 +582,57 @@ function stabilize(lm, wl, t) {
   trk = {}; trkT = t; Object.values(KEY).flat(2).forEach(i => { trk[i] = { x: lm[i].x, y: lm[i].y }; });
 }
 
+/* ---------------- display smoothing ----------------
+   The analysis keeps the raw landmarks; only the drawing is smoothed so the skeleton does not shake:
+   a One Euro filter (steady when still, quick when moving), a two-frame check on sudden leaps, and on/off hysteresis on visibility. */
+const DISP_IDX = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+let disp = null, dispT = -9, armHoldT = null, hipHoldT = null, hipRef = null, sqT = null, shwRef = null;
+function resetDisplay() { disp = null; armHoldT = hipHoldT = sqT = null; hipRef = shwRef = null; }
+const lerp = (a, b, k) => a + (b - a) * k, lpAlpha = (cut, dt) => 1 / (1 + 1 / (2 * Math.PI * cut * dt));
+const q2 = (lm, i) => ({ x: lm[i].x * AR, y: lm[i].y, v: 1 });
+function smoothDisplay(lm, t) {
+  const fresh = !disp || t - dispT > .6 || t < dispT, dt = clamp(t - dispT, 1 / 120, .5); dispT = t;
+  const tor = dist(mid(q2(lm, 11), q2(lm, 12)), mid(q2(lm, 23), q2(lm, 24))) || .25;
+  if (fresh) { disp = []; armHoldT = hipHoldT = null; }
+  // With the hands up (or the far arm hidden) the model sometimes drops one arm onto the other for a few frames,
+  // squeezes both shoulders and arms together as if the person had turned side-on, or lets the two hip points fall onto each other.
+  // Freeze the part that jumped for up to 0.6 s instead of drawing it; after that, accept it (the person may really have turned).
+  const hold = new Set(), shwNow = dist(q2(lm, 11), q2(lm, 12));
+  if (!fresh && shwRef != null && shwNow < .6 * shwRef) {
+    if (sqT == null) sqT = t;
+    if (t - sqT < .6) [11, 12, 13, 14, 15, 16].forEach(i => hold.add(i)); else shwRef = lerp(shwRef, shwNow, .1);
+  } else { sqT = null; shwRef = shwRef == null ? shwNow : lerp(shwRef, shwNow, .1); }
+  // With both hands above the head, an arm whose elbow and wrist suddenly sit well inside its own shoulder (towards the other arm)
+  // is such a drop: raised elbows stay at or outside the shoulders. Measured against the drawn shoulders, which do not jump.
+  if (!fresh && disp[11] && disp[12]) {
+    const u = Math.sign(disp[11].x - disp[12].x) || 1, shw = Math.abs(disp[11].x - disp[12].x) * AR;
+    const handsUp = (disp[11].y + disp[12].y) / 2 - Math.max(lm[15].y, lm[16].y) > .5 * shw;
+    const inward = (i, sh, dir) => (lm[i].x - disp[sh].x) * dir * u * AR / shw;
+    const bad = { L: inward(13, 11, -1) > .45 && inward(15, 11, -1) > .2, R: inward(14, 12, 1) > .45 && inward(16, 12, 1) > .2 };
+    if (handsUp && shw / tor > .3 && (bad.L || bad.R)) {
+      if (armHoldT == null) armHoldT = t;
+      if (t - armHoldT < .6) { if (bad.L) [11, 13, 15].forEach(i => hold.add(i)); if (bad.R) [12, 14, 16].forEach(i => hold.add(i)); }
+    } else armHoldT = null;
+  }
+  const hw = dist(q2(lm, 23), q2(lm, 24));
+  if (!fresh && hipRef != null && hw < .5 * hipRef) { if (hipHoldT == null) hipHoldT = t; if (t - hipHoldT < .6) { hold.add(23); hold.add(24); } else hipRef = lerp(hipRef, hw, .1); }
+  else { hipHoldT = null; hipRef = hipRef == null ? hw : lerp(hipRef, hw, .1); }
+  DISP_IDX.forEach(i => {
+    const x = lm[i].x, y = lm[i].y, v = lm[i].visibility ?? 1, d = disp[i];
+    if (!d) { disp[i] = { x, y, dx: 0, dy: 0, v, on: v > .5, pend: null }; return; }
+    if (hold.has(i)) return;
+    if (Math.hypot((x - d.x) * AR, y - d.y) / tor > .5) { // a sudden leap is drawn only once the next frame agrees
+      const ok = d.pend && Math.hypot((x - d.pend.x) * AR, y - d.pend.y) / tor < .25;
+      if (ok) { d.x = x; d.y = y; d.dx = d.dy = 0; d.pend = null; } else d.pend = { x, y };
+      d.v = lerp(d.v, v, .5); d.on = d.on ? d.v > .35 : d.v > .55; return;
+    }
+    d.pend = null;
+    const ad = lpAlpha(1, dt); d.dx = lerp(d.dx, (x - d.x) / dt, ad); d.dy = lerp(d.dy, (y - d.y) / dt, ad);
+    const a = lpAlpha(1.5 + 4 * Math.hypot(d.dx * AR, d.dy), dt);
+    d.x = lerp(d.x, x, a); d.y = lerp(d.y, y, a); d.v = lerp(d.v, v, .5); d.on = d.on ? d.v > .35 : d.v > .55;
+  });
+}
+
 /* ---------------- drawing ---------------- */
 const BONES = [[11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [24, 26], [26, 28]];
 function draw(t) {
@@ -582,15 +640,15 @@ function draw(t) {
   cx.save(); if (S.mirror) { cx.translate(W, 0); cx.scale(-1, 1); }
   cx.drawImage(vid, 0, 0, W, H);
   cx.fillStyle = 'rgba(6,16,12,.18)'; cx.fillRect(0, 0, W, H);
-  if (lm) {
-    const px = i => [lm[i].x * W, lm[i].y * H], v = i => lm[i].visibility ?? 1;
+  if (disp) {
+    const px = i => [disp[i].x * W, disp[i].y * H], on = i => !!(disp[i] && disp[i].on);
     const s = Math.max(W, H) / 1280;
     cx.lineCap = 'round';
-    BONES.forEach(([a, b]) => { if (v(a) < .5 || v(b) < .5) return; cx.strokeStyle = 'rgba(238,245,240,.75)'; cx.lineWidth = 5 * s; cx.beginPath(); cx.moveTo(...px(a)); cx.lineTo(...px(b)); cx.stroke(); });
-    [11, 12, 13, 14, 23, 24, 25, 26].forEach(i => { if (v(i) < .5) return; cx.fillStyle = '#eef5f0'; cx.beginPath(); cx.arc(...px(i), 7 * s, 0, Math.PI * 2); cx.fill(); });
+    BONES.forEach(([a, b]) => { if (!on(a) || !on(b)) return; cx.strokeStyle = `rgba(238,245,240,${(.35 + .45 * Math.min(disp[a].v, disp[b].v)).toFixed(2)})`; cx.lineWidth = 5 * s; cx.beginPath(); cx.moveTo(...px(a)); cx.lineTo(...px(b)); cx.stroke(); });
+    [11, 12, 13, 14, 23, 24, 25, 26].forEach(i => { if (!on(i)) return; cx.fillStyle = '#eef5f0'; cx.beginPath(); cx.arc(...px(i), 7 * s, 0, Math.PI * 2); cx.fill(); });
     // virtual bands
     [['LW', 15, 13], ['RW', 16, 14], ['LA', 27, 25], ['RA', 28, 26]].forEach(([k, i, j]) => {
-      if (v(i) < .5) return;
+      if (!on(i)) return;
       const [x, y] = px(i), [x2, y2] = px(j); const ang = Math.atan2(y - y2, x - x2);
       const glow = bandGlow[k] > t;
       if (glow) { const ph = (t * 2.2) % 1; for (let r = 0; r < 2; r++) { const p = (ph + r * .5) % 1; cx.strokeStyle = `rgba(232,166,74,${(1 - p) * .9})`; cx.lineWidth = 4 * s; cx.beginPath(); cx.arc(x, y, (26 + p * 50) * s, 0, Math.PI * 2); cx.stroke(); } }
@@ -601,7 +659,7 @@ function draw(t) {
       cx.restore();
     });
     if (S.ex === 'curl' && A.arm) {
-      [['L', 13], ['R', 14]].forEach(([k, i]) => { const a = A.arm[k].a; if (a == null || v(i) < .5) return; const [x, y] = px(i); cx.save(); cx.translate(x, y); if (S.mirror) cx.scale(-1, 1); cx.font = `700 ${26 * s}px "Barlow Condensed", sans-serif`; cx.fillStyle = 'rgba(8,20,16,.75)'; const txt = Math.round(a) + '°'; const tw = cx.measureText(txt).width; cx.fillRect(14 * s, -32 * s, tw + 14 * s, 34 * s); cx.fillStyle = '#eef5f0'; cx.fillText(txt, 21 * s, -8 * s); cx.restore(); });
+      [['L', 13], ['R', 14]].forEach(([k, i]) => { const a = A.arm[k].a; if (a == null || !on(i)) return; const [x, y] = px(i); cx.save(); cx.translate(x, y); if (S.mirror) cx.scale(-1, 1); cx.font = `700 ${26 * s}px "Barlow Condensed", sans-serif`; cx.fillStyle = 'rgba(8,20,16,.75)'; const txt = Math.round(a) + '°'; const tw = cx.measureText(txt).width; cx.fillRect(14 * s, -32 * s, tw + 14 * s, 34 * s); cx.fillStyle = '#eef5f0'; cx.fillText(txt, 21 * s, -8 * s); cx.restore(); });
     }
   }
   cx.restore();
@@ -641,11 +699,15 @@ async function copy(text) { try { await navigator.clipboard.writeText(text); toa
 function toast(m) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2400); }
 
 /* ---------------- wiring ---------------- */
-$('#go-cam').addEventListener('click', startCamera);
-$('#vfile').addEventListener('change', e => { const f = e.target.files[0]; if (f) startFile(f, '영상 파일을 분석하고 있어요'); });
-const demoSrc = (vid.canPlayType('video/mp4; codecs="avc1.42E01E"') ? 'demo-curl.mp4' : 'demo-curl.webm') + '?v=4';
-$('#go-demo').addEventListener('click', () => startFile(demoSrc, '3D 예시 영상을 분석하고 있어요'));
-fetch(demoSrc, { method: 'HEAD' }).then(r => { if (r.ok) $('#demo-row').hidden = false; }).catch(() => {});
+$('#go-cam').addEventListener('click', () => { demoOn = false; startCamera(); });
+$('#vfile').addEventListener('change', e => { const f = e.target.files[0]; if (f) { demoOn = false; startFile(f, '영상 파일을 분석하고 있어요'); } });
+// one 3D demo clip per exercise; switching the exercise chip while a demo plays switches the clip too
+const MP4 = !!vid.canPlayType('video/mp4; codecs="avc1.42E01E"');
+const demoSrc = ex => `demo-${ex}.${MP4 ? 'mp4' : 'webm'}?v=5`;
+let demoOn = false;
+function playDemo() { demoOn = true; startFile(demoSrc(S.ex), `${EX[S.ex].name} 3D 예시 영상을 분석하고 있어요`); }
+$('#go-demo').addEventListener('click', playDemo);
+fetch(demoSrc('curl'), { method: 'HEAD' }).then(r => { if (r.ok) $('#demo-row').hidden = false; }).catch(() => {});
 $('#b-start').addEventListener('click', () => { if (S.phase === 'done') { S.setIdx = 0; S.setLog = []; S.feed = []; S.signals = 0; S.startedAt = null; renderFeed(); updateSummary(); } startSet(); });
 $('#b-end').addEventListener('click', () => endSet('user'));
 $('#rest-skip').addEventListener('click', endRest);
@@ -659,11 +721,17 @@ $('#t-voice').addEventListener('change', e => S.voice = e.target.checked);
 $('#t-sound').addEventListener('change', e => S.sound = e.target.checked);
 $('#t-restalert').addEventListener('change', e => S.restAlert = e.target.checked);
 document.querySelectorAll('[data-ex]').forEach(b => b.addEventListener('click', () => {
-  if (S.phase === 'active') { toast('세트를 끝낸 뒤 바꿔 주세요'); return; }
+  if (S.phase === 'active' && !(demoOn && S.src === 'file')) { toast('세트를 끝낸 뒤 바꿔 주세요'); return; } // a demo can switch any time
   S.ex = b.dataset.ex; document.querySelectorAll('[data-ex]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
-  $('#ex-tip').textContent = EX[S.ex].tip; $('#in-reps').value = S.ex === 'curl' ? 12 : 20; A = S.ex === 'curl' ? newCurl() : newLegs(); updateHud();
+  $('#ex-tip').textContent = EX[S.ex].tip; $('#in-reps').value = S.ex === 'curl' ? 12 : 20; A = S.ex === 'curl' ? newCurl() : newLegs();
+  $('#go-demo').textContent = `3D 예시 영상으로 체험 · ${EX[S.ex].name}`;
+  if (demoOn && S.src === 'file') { // a new demo is a fresh session for the new exercise
+    S.phase = 'ready'; S.raiseT = null; S.setIdx = 0; S.setLog = []; S.feed = []; S.signals = 0; S.startedAt = null; S.reps = 0;
+    $('#rest').hidden = true; renderFeed(); updateSummary(); updateButtons(); playDemo();
+  }
+  updateHud();
 }));
-window.syncfitCam = { S, get A() { return A; }, startFile, startSet, endSet, DBG, get T() { return T; }, get lm() { return lm; } }; // for testing
+window.syncfitCam = { S, get A() { return A; }, startFile, startSet, endSet, DBG, get T() { return T; }, get lm() { return lm; }, get disp() { return disp; } }; // for testing
 updateHud(); updateSummary(); renderFeed(); updateButtons();
 </script>
 </body>
